@@ -1,0 +1,133 @@
+diff --git a/linux/arch/x86/entry/syscalls/syscall_32.tbl b/linux/arch/x86/entry/syscalls/syscall_32.tbl
+index 3cf7b533b..1d3147bf4 100644
+--- a/linux/arch/x86/entry/syscalls/syscall_32.tbl
++++ b/linux/arch/x86/entry/syscalls/syscall_32.tbl
+@@ -398,3 +398,8 @@
+ 384	i386	arch_prctl		sys_arch_prctl			__ia32_compat_sys_arch_prctl
+ 385	i386	io_pgetevents		sys_io_pgetevents		__ia32_compat_sys_io_pgetevents
+ 386	i386	rseq			sys_rseq			__ia32_sys_rseq
++
++401	i386	kkv_init		sys_kkv_init			__ia32_sys_kkv_init
++402	i386	kkv_destroy		sys_kkv_destroy			__ia32_sys_kkv_destroy
++403	i386	kkv_put			sys_kkv_put			__ia32_sys_kkv_put
++404	i386	kkv_get			sys_kkv_get			__ia32_sys_kkv_get
+diff --git a/linux/arch/x86/entry/syscalls/syscall_64.tbl b/linux/arch/x86/entry/syscalls/syscall_64.tbl
+index f0b1709a5..875d50372 100644
+--- a/linux/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/linux/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -344,6 +344,11 @@
+ 333	common	io_pgetevents		__x64_sys_io_pgetevents
+ 334	common	rseq			__x64_sys_rseq
+ 
++401	common	kkv_init		__x64_sys_kkv_init
++402	common	kkv_destroy		__x64_sys_kkv_destroy
++403	common	kkv_put			__x64_sys_kkv_put
++404	common	kkv_get			__x64_sys_kkv_get
++
+ #
+ # x32-specific system call numbers start at 512 to avoid cache impact
+ # for native 64-bit operation. The __x32_compat_sys stubs are created
+diff --git a/linux/include/linux/syscalls.h b/linux/include/linux/syscalls.h
+index 2ff814c92..ecbca0221 100644
+--- a/linux/include/linux/syscalls.h
++++ b/linux/include/linux/syscalls.h
+@@ -1293,4 +1293,9 @@ static inline unsigned int ksys_personality(unsigned int personality)
+ 	return old;
+ }
+ 
++asmlinkage long sys_kkv_init(int flags);
++asmlinkage long sys_kkv_destroy(int flags);
++asmlinkage long sys_kkv_put(uint32_t key, void *val, size_t size, int flags);
++asmlinkage long sys_kkv_get(uint32_t key, void *val, size_t size, int flags);
++
+ #endif
+diff --git a/linux/include/uapi/asm-generic/unistd.h b/linux/include/uapi/asm-generic/unistd.h
+index df4bedb9b..e25e90c07 100644
+--- a/linux/include/uapi/asm-generic/unistd.h
++++ b/linux/include/uapi/asm-generic/unistd.h
+@@ -740,6 +740,15 @@ __SYSCALL(__NR_rseq, sys_rseq)
+ #undef __NR_syscalls
+ #define __NR_syscalls 294
+ 
++#define __NR_kkv_init 401
++__SYSCALL(__NR_kkv_init, sys_kkv_init)
++#define __NR_kkv_destroy 402
++__SYSCALL(__NR_kkv_destroy, sys_kkv_destroy)
++#define __NR_kkv_put 403
++__SYSCALL(__NR_kkv_put, sys_kkv_put)
++#define __NR_kkv_get 404
++__SYSCALL(__NR_kkv_get, sys_kkv_get)
++
+ /*
+  * 32 bit systems traditionally used different
+  * syscalls for off_t and loff_t arguments, while
+diff --git a/linux/kernel/Makefile b/linux/kernel/Makefile
+index 7a63d567f..1236bbe05 100644
+--- a/linux/kernel/Makefile
++++ b/linux/kernel/Makefile
+@@ -10,7 +10,8 @@ obj-y     = fork.o exec_domain.o panic.o \
+ 	    extable.o params.o \
+ 	    kthread.o sys_ni.o nsproxy.o \
+ 	    notifier.o ksysfs.o cred.o reboot.o \
+-	    async.o range.o smpboot.o ucount.o
++	    async.o range.o smpboot.o ucount.o \
++		kkv.o
+ 
+ obj-$(CONFIG_MODULES) += kmod.o
+ obj-$(CONFIG_MULTIUSER) += groups.o
+diff --git a/linux/kernel/kkv.c b/linux/kernel/kkv.c
+new file mode 100644
+index 000000000..1304f4193
+--- /dev/null
++++ b/linux/kernel/kkv.c
+@@ -0,0 +1,50 @@
++#include <linux/syscalls.h>
++#include <linux/printk.h>
++
++long (*kkv_init_ptr)(int flags) = NULL;
++EXPORT_SYMBOL(kkv_init_ptr);
++
++long (*kkv_destroy_ptr)(int flags) = NULL;
++EXPORT_SYMBOL(kkv_destroy_ptr);
++
++long (*kkv_put_ptr)(uint32_t key, void *val, size_t size, int flags) = NULL;
++EXPORT_SYMBOL(kkv_put_ptr);
++
++long (*kkv_get_ptr)(uint32_t key, void *val, size_t size, int flags) = NULL;
++EXPORT_SYMBOL(kkv_get_ptr);
++
++SYSCALL_DEFINE1(kkv_init, int, flags)
++{
++	if (kkv_init_ptr)
++		return kkv_init_ptr(flags);
++
++	pr_err("fridge module not running. init exiting.\n");
++	return -ENOSYS;
++}
++
++SYSCALL_DEFINE1(kkv_destroy, int, flags)
++{
++	if (kkv_destroy_ptr)
++		return kkv_destroy_ptr(flags);
++
++	pr_err("fridge module not running. destroy exiting.\n");
++	return -ENOSYS;
++}
++
++SYSCALL_DEFINE4(kkv_put, uint32_t, key, void *, val, size_t, size, int, flags)
++{
++	if (kkv_put_ptr)
++		return kkv_put_ptr(key, val, size, flags);
++
++	pr_err("fridge module not running. put exiting.\n");
++	return -ENOSYS;
++}
++
++SYSCALL_DEFINE4(kkv_get, uint32_t, key, void *, val, size_t, size, int, flags)
++{
++	if (kkv_get_ptr)
++		return kkv_get_ptr(key, val, size, flags);
++
++	pr_err("fridge module not running. get exiting.\n");
++	return -ENOSYS;
++}
