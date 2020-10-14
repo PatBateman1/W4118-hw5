@@ -398,3 +398,8 @@
 384	i386	arch_prctl		sys_arch_prctl			__ia32_compat_sys_arch_prctl
 385	i386	io_pgetevents		sys_io_pgetevents		__ia32_compat_sys_io_pgetevents
 386	i386	rseq			sys_rseq			__ia32_sys_rseq
+
+401	i386	kkv_init		sys_kkv_init			__ia32_sys_kkv_init
+402	i386	kkv_destroy		sys_kkv_destroy			__ia32_sys_kkv_destroy
+403	i386	kkv_put			sys_kkv_put			__ia32_sys_kkv_put
+404	i386	kkv_get			sys_kkv_get			__ia32_sys_kkv_get

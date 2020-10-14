@@ -344,6 +344,11 @@
 333	common	io_pgetevents		__x64_sys_io_pgetevents
 334	common	rseq			__x64_sys_rseq
 
+401	common	kkv_init		__x64_sys_kkv_init
+402	common	kkv_destroy		__x64_sys_kkv_destroy
+403	common	kkv_put			__x64_sys_kkv_put
+404	common	kkv_get			__x64_sys_kkv_get
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation. The __x32_compat_sys stubs are created

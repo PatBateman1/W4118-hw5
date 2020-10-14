@@ -1293,4 +1293,9 @@ static inline unsigned int ksys_personality(unsigned int personality)
 	return old;
 }
 
+asmlinkage long sys_kkv_init(int flags);
+asmlinkage long sys_kkv_destroy(int flags);
+asmlinkage long sys_kkv_put(uint32_t key, void *val, size_t size, int flags);
+asmlinkage long sys_kkv_get(uint32_t key, void *val, size_t size, int flags);
+
 #endif
