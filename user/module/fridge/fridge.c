@@ -9,7 +9,7 @@
 #include <linux/printk.h>
 #include "fridge_data_structures.h"
 #include <linux/list.h>
-#include <linux/types.h>
+#include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
@@ -23,17 +23,18 @@ extern long (*kkv_put_ptr)(uint32_t key, void *val, size_t size, int flags);
 
 extern long (*kkv_get_ptr)(uint32_t key, void *val, size_t size, int flags);
 
-void destroy_bucket(struct list_head entries);
+void destroy_bucket(struct list_head *entry);
 
-static struct kkv_ht_bucket *ht[HASH_TABLE_LENGTH];
+static struct kkv_ht_bucket *ht;
 
 long kkv_init(int flags)
 {	
 	int i;
+	ht = (struct kkv_ht_bucket *) kmalloc(sizeof(struct kkv_ht_bucket) * HASH_TABLE_LENGTH, GFP_KERNEL);
 	for (i=0; i<HASH_TABLE_LENGTH; i++) {
-		ht[i] = (struct kkv_ht_bucket *) kmalloc(sizeof(*ht), GFP_KERNEL);
-		INIT_LIST_HEAD(&ht[i]->entries);
-		ht[i]->count = 0;
+		INIT_LIST_HEAD(&ht[i].entries);
+		spin_lock_init(&ht[i].lock);
+		ht[i].count = 0;
 	}
 	return 0;
 }
@@ -42,16 +43,16 @@ long kkv_destroy(int flags)
 {
 	int i;
 	for (i=0; i<HASH_TABLE_LENGTH; i++) {
-		destroy_bucket(ht[i]->entries);
-		kfree(ht[i]);
+		destroy_bucket(&ht[i].entries);
 	}
+	kfree(ht);
 	return 0;
 }
 
 long kkv_put(uint32_t key, void *val, size_t size, int flags)
 {
 	int index = key % HASH_TABLE_LENGTH;
-	struct kkv_ht_bucket *bk = ht[index];
+	struct kkv_ht_bucket *bk = &ht[index];
 	struct kkv_ht_entry *entry;
 	struct kkv_ht_entry *new;
 	struct kkv_ht_entry *remove = NULL;
@@ -99,7 +100,7 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 long kkv_get(uint32_t key, void *val, size_t size, int flags)
 {
 	int index = key % HASH_TABLE_LENGTH;
-	struct kkv_ht_bucket *bk = ht[index];
+	struct kkv_ht_bucket *bk = &ht[index];
 	struct kkv_ht_entry *entry;
 	struct kkv_ht_entry *remove = NULL;
 	spin_lock(&bk->lock);
@@ -113,7 +114,8 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 	}
 	spin_unlock(&bk->lock);
 	if (remove) {
-		if (copy_to_user(val, remove->kv_pair.val, remove->kv_pair.size) != 0) {
+		size = remove->kv_pair.size > size ? size : remove->kv_pair.size;
+		if (copy_to_user(val, remove->kv_pair.val, size) != 0) {
 			printk(KERN_ERR "copy_to_user() failed");
 			spin_lock(&bk->lock);
 			list_add_tail(&remove->entries, &bk->entries);
@@ -123,13 +125,13 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 		kfree(remove);
 		return 0;
 	}
-	return -1;
+	return -ENOENT;
 }
 
-void destroy_bucket(struct list_head entries)
+void destroy_bucket(struct list_head *entry)
 {
 	struct kkv_ht_entry *cur, *nxt;
-	list_for_each_entry_safe(cur, nxt, &entries, entries) {
+	list_for_each_entry_safe(cur, nxt, entry, entries) {
 		list_del(&cur->entries);
 		kfree(cur->kv_pair.val);
 		kfree(cur);
