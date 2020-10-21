@@ -25,11 +25,32 @@ extern long (*kkv_get_ptr)(uint32_t key, void *val, size_t size, int flags);
 
 void destroy_bucket(struct list_head *entry);
 
+/*
+ * init-destroy identifier 
+ */
+struct init_identifier {
+	spinlock_t lock;
+	int is_init;
+};
+
+static struct init_identifier *identifier;
+
 static struct kkv_ht_bucket *ht;
 
 long kkv_init(int flags)
 {	
 	int i;
+
+	// check if already inited
+	spin_lock(&identifier->lock);
+	if (identifier->is_init) {
+		spin_unlock(&identifier->lock);
+		printk(KERN_ERR "init twice!");
+		return -EPERM;
+	}
+	identifier->is_init++;
+	spin_unlock(&identifier->lock);
+
 	ht = (struct kkv_ht_bucket *) kmalloc(sizeof(struct kkv_ht_bucket) * HASH_TABLE_LENGTH, GFP_KERNEL);
 	for (i=0; i<HASH_TABLE_LENGTH; i++) {
 		INIT_LIST_HEAD(&ht[i].entries);
@@ -42,6 +63,17 @@ long kkv_init(int flags)
 long kkv_destroy(int flags)
 {
 	int i;
+
+	// check if already destroyed
+	spin_lock(&identifier->lock);
+	if (!identifier->is_init) {
+		spin_unlock(&identifier->lock);
+		printk(KERN_ERR "destroy twice!");
+		return -EPERM;
+	}
+	identifier->is_init--;
+	spin_unlock(&identifier->lock);
+
 	for (i=0; i<HASH_TABLE_LENGTH; i++) {
 		destroy_bucket(&ht[i].entries);
 	}
@@ -56,6 +88,16 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	struct kkv_ht_entry *entry;
 	struct kkv_ht_entry *new;
 	struct kkv_ht_entry *remove = NULL;
+
+	// check if already inited
+	spin_lock(&identifier->lock);
+	if (identifier->is_init == 0) {
+		printk(KERN_ERR "put before init!");
+		spin_unlock(&identifier->lock);
+		return -EPERM;
+	}
+	spin_unlock(&identifier->lock);
+
 	new = (struct kkv_ht_entry *) kmalloc(sizeof(*new), GFP_KERNEL);
 	new->kv_pair.key = key;
 	new->kv_pair.size = size;
@@ -103,6 +145,16 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 	struct kkv_ht_bucket *bk = &ht[index];
 	struct kkv_ht_entry *entry;
 	struct kkv_ht_entry *remove = NULL;
+
+	// check if already inited
+	spin_lock(&identifier->lock);
+	if (identifier->is_init == 0) {
+		printk(KERN_ERR "put before init!");
+		spin_unlock(&identifier->lock);
+		return -EPERM;
+	}
+	spin_unlock(&identifier->lock);
+
 	spin_lock(&bk->lock);
 	list_for_each_entry(entry, &bk->entries, entries) {
 		if (entry->kv_pair.key == key) {
@@ -141,6 +193,9 @@ void destroy_bucket(struct list_head *entry)
 int fridge_init(void)
 {
 	pr_info("Installing fridge\n");
+	identifier = (struct init_identifier *) kmalloc(sizeof(struct init_identifier), GFP_KERNEL);
+	spin_lock_init(&identifier->lock);
+	identifier->is_init = 0;
 	kkv_init_ptr = kkv_init;
 	kkv_destroy_ptr = kkv_destroy;
 	kkv_put_ptr = kkv_put;
@@ -151,6 +206,7 @@ int fridge_init(void)
 void fridge_exit(void)
 {
 	pr_info("Removing fridge\n");
+	kfree(identifier);
 }
 
 module_init(fridge_init);
