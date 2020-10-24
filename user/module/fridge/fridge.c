@@ -37,7 +37,7 @@ static struct init_identifier *identifier;
 
 static struct kkv_ht_bucket *ht;
 
-struct kmem_cache *cache;
+static struct kmem_cache *cache;
 
 long kkv_init(int flags)
 {	
@@ -101,14 +101,14 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	spin_unlock(&identifier->lock);
 
 	new = kmem_cache_alloc(cache, GFP_KERNEL);
-	new->kv_pair.key = key;
-	new->kv_pair.size = size;
-	new->kv_pair.val = kmalloc(size, GFP_KERNEL);
 
 	if (!new) {
 		printk(KERN_ERR "new kmem_cache_alloc() failed");
 		return -ENOMEM;
 	}
+	new->kv_pair.key = key;
+	new->kv_pair.size = size;
+	new->kv_pair.val = kmalloc(size, GFP_KERNEL);
 
 	if (!new->kv_pair.val) {
 		printk(KERN_ERR "new->kv_pair.val kmalloc() failed");
@@ -201,7 +201,7 @@ int fridge_init(void)
 	identifier = (struct init_identifier *) kmalloc(sizeof(struct init_identifier), GFP_KERNEL);
 	spin_lock_init(&identifier->lock);
 	identifier->is_init = 0;
-	cache = kmem_cache_create("bucket", sizeof(struct kkv_ht_bucket), 0, 0, NULL);
+	cache = kmem_cache_create("entry", sizeof(struct kkv_ht_entry), 0, 0, NULL);
 	kkv_init_ptr = kkv_init;
 	kkv_destroy_ptr = kkv_destroy;
 	kkv_put_ptr = kkv_put;
@@ -212,6 +212,7 @@ int fridge_init(void)
 void fridge_exit(void)
 {
 	pr_info("Removing fridge\n");
+	kkv_destroy(0);
 	kmem_cache_destroy(cache);
 	kfree(identifier);
 }
