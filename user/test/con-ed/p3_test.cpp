@@ -9,14 +9,14 @@ void *test_thread(void *ignore)
 {
     int i;
     for (i = 0; i < 10; i++) {
-        int operation = (10 * random()) % 3;
+        int num = (10 * random()) % 3;
         int value = random() * 10;
         uint32_t key = rand() % 64;
-        if (operation == 0)
+        if (num == 0)
             kkv_init(0);
-        else if (operation == 2)
+        else if (num == 2)
             kkv_destroy(0);
-        else if (operation == 5)
+        else if (num == 3)
             kkv_put(key, value, sizeof(int) + 1, 0);
         else
             kkv_get(key, value, MAX_VAL_SIZE, KKV_NONBLOCK);
@@ -40,7 +40,7 @@ void part2_test(int nthreads)
 }
 int main(int argc, char **argv)
 {
-    int nthreads = 100;
+    int nthreads = 50;
     RUN_TEST(part2_test, nthreads);
     return 0;
 }
