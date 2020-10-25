@@ -138,11 +138,7 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	spin_unlock(&bk->lock);
 	if (remove) {
 		kfree(remove->kv_pair.val);
-<<<<<<< HEAD
-		kfree(remove);
-=======
 		kmem_cache_free(cache, remove);
->>>>>>> dev-part3
 	}
 	return 0;
 }
@@ -183,11 +179,7 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 			return -EFAULT;
 		}
 		kfree(remove->kv_pair.val);
-<<<<<<< HEAD
-		kfree(remove);
-=======
 		kmem_cache_free(cache, remove);
->>>>>>> dev-part3
 		return 0;
 	}
 	return -ENOENT;
