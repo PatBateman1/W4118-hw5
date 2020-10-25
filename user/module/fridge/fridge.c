@@ -134,8 +134,10 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	list_add_tail(&new->entries, &bk->entries);
 	bk->count++;
 	spin_unlock(&bk->lock);
-	if (remove)
+	if (remove) {
+		kfree(remove->kv_pair.val);
 		kfree(remove);
+	}
 	return 0;
 }
 
@@ -174,6 +176,7 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 			spin_unlock(&bk->lock);
 			return -EFAULT;
 		}
+		kfree(remove->kv_pair.val);
 		kfree(remove);
 		return 0;
 	}
