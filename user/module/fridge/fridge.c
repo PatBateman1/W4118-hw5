@@ -37,6 +37,8 @@ static struct init_identifier *identifier;
 
 static struct kkv_ht_bucket *ht;
 
+static struct kmem_cache *cache;
+
 long kkv_init(int flags)
 {	
 	int i;
@@ -98,26 +100,26 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	}
 	spin_unlock(&identifier->lock);
 
-	new = (struct kkv_ht_entry *) kmalloc(sizeof(*new), GFP_KERNEL);
+	new = kmem_cache_alloc(cache, GFP_KERNEL);
+
+	if (!new) {
+		printk(KERN_ERR "new kmem_cache_alloc() failed");
+		return -ENOMEM;
+	}
 	new->kv_pair.key = key;
 	new->kv_pair.size = size;
 	new->kv_pair.val = kmalloc(size, GFP_KERNEL);
 
-	if (!new) {
-		printk(KERN_ERR "new kmalloc() failed");
-		return -ENOMEM;
-	}
-
 	if (!new->kv_pair.val) {
 		printk(KERN_ERR "new->kv_pair.val kmalloc() failed");
-		kfree(new);
+		kmem_cache_free(cache, new);
 		return -ENOMEM;
 	}
 
 	if (copy_from_user(new->kv_pair.val, val, size) != 0) {
 		printk(KERN_ERR "copy_from_user() failed");
 		kfree(new->kv_pair.val);
-		kfree(new);
+		kmem_cache_free(cache, new);
 		return -EFAULT;
 	}
 
@@ -136,7 +138,11 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	spin_unlock(&bk->lock);
 	if (remove) {
 		kfree(remove->kv_pair.val);
+<<<<<<< HEAD
 		kfree(remove);
+=======
+		kmem_cache_free(cache, remove);
+>>>>>>> dev-part3
 	}
 	return 0;
 }
@@ -177,7 +183,11 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 			return -EFAULT;
 		}
 		kfree(remove->kv_pair.val);
+<<<<<<< HEAD
 		kfree(remove);
+=======
+		kmem_cache_free(cache, remove);
+>>>>>>> dev-part3
 		return 0;
 	}
 	return -ENOENT;
@@ -189,7 +199,7 @@ void destroy_bucket(struct list_head *entry)
 	list_for_each_entry_safe(cur, nxt, entry, entries) {
 		list_del(&cur->entries);
 		kfree(cur->kv_pair.val);
-		kfree(cur);
+		kmem_cache_free(cache, cur);
 	}
 }
 
@@ -199,6 +209,7 @@ int fridge_init(void)
 	identifier = (struct init_identifier *) kmalloc(sizeof(struct init_identifier), GFP_KERNEL);
 	spin_lock_init(&identifier->lock);
 	identifier->is_init = 0;
+	cache = kmem_cache_create("entry", sizeof(struct kkv_ht_entry), 0, 0, NULL);
 	kkv_init_ptr = kkv_init;
 	kkv_destroy_ptr = kkv_destroy;
 	kkv_put_ptr = kkv_put;
@@ -209,6 +220,8 @@ int fridge_init(void)
 void fridge_exit(void)
 {
 	pr_info("Removing fridge\n");
+	kkv_destroy(0);
+	kmem_cache_destroy(cache);
 	kfree(identifier);
 }
 
