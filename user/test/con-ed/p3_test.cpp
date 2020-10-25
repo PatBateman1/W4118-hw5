@@ -2,36 +2,34 @@
 // Created by joe on 10/25/20.
 //
 
-/**
- * reference from hot_potato
- */
 #include "con_ed.h"
 #define usage(arg0) fprintf(stderr, "usage: %s [<nthreads> <niters>]\n", arg0)
-void *cc_thread(void *ignore)
+
+void *test_thread(void *ignore)
 {
     int i;
     for (i = 0; i < 10; i++) {
-        int operation = random() % 4;
-        char *banana = "banana";
+        int operation = (10 * random()) % 3;
+        int value = random() * 10;
         uint32_t key = rand() % 64;
         if (operation == 0)
             kkv_init(0);
-        else if (operation == 1)
-            kkv_destroy(0);
         else if (operation == 2)
-            kkv_put(key, banana, strlen(banana) + 1, 0);
+            kkv_destroy(0);
+        else if (operation == 5)
+            kkv_put(key, value, sizeof(int) + 1, 0);
         else
-            kkv_get(key, banana, MAX_VAL_SIZE, KKV_NONBLOCK);
+            kkv_get(key, value, MAX_VAL_SIZE, KKV_NONBLOCK);
     }
     return NULL;
 }
-void test_part2(int nthreads)
+void part2_test(int nthreads)
 {
     pthread_t *threads;
     int i;
     threads = malloc(nthreads * sizeof(*threads));
     for (i = 0; i < nthreads; i++) {
-        int ret = pthread_create((threads + i), NULL, cc_thread, NULL);
+        int ret = pthread_create((threads + i), NULL, test_thread, NULL);
         if (ret)
             die("pthread_create() failed");
     }
@@ -42,7 +40,7 @@ void test_part2(int nthreads)
 }
 int main(int argc, char **argv)
 {
-    int nthreads = 15;
-    RUN_TEST(test_part2, nthreads);
+    int nthreads = 100;
+    RUN_TEST(part2_test, nthreads);
     return 0;
 }
