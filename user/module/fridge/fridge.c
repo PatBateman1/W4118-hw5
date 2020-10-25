@@ -12,6 +12,7 @@
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/wait.h>
 
 #define MODULE_NAME "Fridge"
 
@@ -124,21 +125,31 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 	}
 
 	INIT_LIST_HEAD(&new->entries);
+
 	spin_lock(&bk->lock);
 	list_for_each_entry(entry, &bk->entries, entries) {
 		if (entry->kv_pair.key == key) {
 			remove = entry;
-			list_del(&remove->entries);
-			bk->count--;
 			break;
 		}
 	}
-	list_add_tail(&new->entries, &bk->entries);
-	bk->count++;
-	spin_unlock(&bk->lock);
 	if (remove) {
-		kfree(remove->kv_pair.val);
-		kmem_cache_free(cache, remove);
+		if (remove->kv_pair.val)
+			kfree(remove->kv_pair.val);
+		remove->kv_pair.val = new->kv_pair.val;
+		remove->q_count--;
+		remove->kv_pair.size = size;
+		spin_unlock(&bk->lock);
+		kmem_cache_free(cache, new);
+		if (remove->q_count >= 0)
+			wake_up_interruptible(&remove->q);
+
+	} else {
+		init_waitqueue_head(&new->q);
+		new->q_count = 0;
+		list_add_tail(&new->entries, &bk->entries);
+		bk->count++;
+		spin_unlock(&bk->lock);
 	}
 	return 0;
 }
@@ -148,7 +159,9 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 	int index = key % HASH_TABLE_LENGTH;
 	struct kkv_ht_bucket *bk = &ht[index];
 	struct kkv_ht_entry *entry;
+	struct kkv_ht_entry *new;
 	struct kkv_ht_entry *remove = NULL;
+	int isin = 0;
 
 	// check if already inited
 	spin_lock(&identifier->lock);
@@ -159,28 +172,68 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 	}
 	spin_unlock(&identifier->lock);
 
-	spin_lock(&bk->lock);
-	list_for_each_entry(entry, &bk->entries, entries) {
-		if (entry->kv_pair.key == key) {
-			remove = entry;
-			list_del(&remove->entries);
-			bk->count--;
-			break;
+	for (;;) {
+		spin_lock(&bk->lock);
+		list_for_each_entry(entry, &bk->entries, entries) {
+			if (entry->kv_pair.key == key) {
+				remove = entry;
+				break;
+			}
 		}
-	}
-	spin_unlock(&bk->lock);
-	if (remove) {
-		size = remove->kv_pair.size > size ? size : remove->kv_pair.size;
-		if (copy_to_user(val, remove->kv_pair.val, size) != 0) {
-			printk(KERN_ERR "copy_to_user() failed");
-			spin_lock(&bk->lock);
-			list_add_tail(&remove->entries, &bk->entries);
+
+		if (remove) {
+			if (remove->kv_pair.val) {
+				size = remove->kv_pair.size > size ? size : remove->kv_pair.size;
+				if (copy_to_user(val, remove->kv_pair.val, size) != 0) {
+					printk(KERN_ERR "copy_to_user() failed");
+					list_add_tail(&remove->entries, &bk->entries);
+					spin_unlock(&bk->lock);
+					return -EFAULT;
+				}
+				remove->q_count--;
+				if (!remove->q_count) {
+					list_del(&remove->entries);
+					bk->count--;
+					spin_unlock(&bk->lock);
+					kfree(remove->kv_pair.val);
+					kmem_cache_free(cache, remove);
+				} else {
+					spin_unlock(&bk->lock);
+					kfree(remove->kv_pair.val);
+					remove->kv_pair.val = NULL;
+				}
+				return 0;
+			} else {
+				if (!isin)
+					remove->q_count++;
+				spin_unlock(&bk->lock);
+				if (wait_event_interruptible(remove->q, remove->kv_pair.val) == -ERESTARTSYS)
+					return -EINTR;
+			}
+		} else {
+			if (flags == KKV_NONBLOCK) {
+				spin_unlock(&bk->lock);
+				break;
+			}
+
+			new = kmem_cache_alloc(cache, GFP_KERNEL);
+			if (!new) {
+				printk(KERN_ERR "new kmem_cache_alloc() failed");
+				spin_unlock(&bk->lock);
+				return -ENOMEM;
+			}
+			new->kv_pair.key = key;
+			new->kv_pair.size = 0;
+			new->kv_pair.val = NULL;
+			INIT_LIST_HEAD(&new->entries);
+			init_waitqueue_head(&new->q);
+			new->q_count = 1;
+			list_add_tail(&new->entries, &bk->entries);
 			spin_unlock(&bk->lock);
-			return -EFAULT;
+			if (wait_event_interruptible(new->q, new->kv_pair.val) == -ERESTARTSYS)
+				return -EINTR;
 		}
-		kfree(remove->kv_pair.val);
-		kmem_cache_free(cache, remove);
-		return 0;
+		isin = 1;
 	}
 	return -ENOENT;
 }
