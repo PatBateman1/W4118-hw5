@@ -17,9 +17,9 @@ void *test_thread(void *ignore)
         else if (num == 2)
             kkv_destroy(0);
         else if (num == 3)
-            kkv_put(key, value, sizeof(int) + 1, 0);
+            kkv_put(key, &value, sizeof(int) + 1, 0);
         else
-            kkv_get(key, value, MAX_VAL_SIZE, KKV_NONBLOCK);
+            kkv_get(key, &value, MAX_VAL_SIZE, KKV_NONBLOCK);
     }
     return NULL;
 }
@@ -27,7 +27,7 @@ void part2_test(int nthreads)
 {
     pthread_t *threads;
     int i;
-    threads = malloc(nthreads * sizeof(*threads));
+    threads = (pthread_t *) malloc(nthreads * sizeof(*threads));
     for (i = 0; i < nthreads; i++) {
         int ret = pthread_create((threads + i), NULL, test_thread, NULL);
         if (ret)
