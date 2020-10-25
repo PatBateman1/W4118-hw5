@@ -134,35 +134,19 @@ long kkv_put(uint32_t key, void *val, size_t size, int flags)
 		}
 	}
 	if (remove) {
-		void *temp = kmalloc(size, GFP_KERNEL);
-		if (!temp) {
-			printk(KERN_ERR "temp kmalloc() failed");
-			return -ENOMEM;
-		}
-
-		if (copy_from_user(temp, val, size) != 0) {
-			printk(KERN_ERR "temp copy_from_user() failed");
-			kfree(temp);
-			return -EFAULT;
-		}
-		kfree(remove->kv_pair.val);
-		remove->kv_pair.val = temp;
-
-		// check whether to wake the waitqueue
-		if (!remove->q_count) {
-			remove->q_count++;
-			spin_unlock(&bk->lock);
-			wake_up_interruptible(&remove->q);
-		} else
-			spin_unlock(&bk->lock);
-
-		// free the memory of new
-		kfree(new->kv_pair.val);
+		if (remove->kv_pair.val)
+			kfree(remove->kv_pair.val);
+		remove->kv_pair.val = new->kv_pair.val;
+		remove->q_count--;
+		remove->kv_pair.size = size;
+		spin_unlock(&bk->lock);
 		kmem_cache_free(cache, new);
+		if (remove->q_count >= 0)
+			wake_up_interruptible(&remove->q);
 
 	} else {
 		init_waitqueue_head(&new->q);
-		new->q_count = 1;
+		new->q_count = 0;
 		list_add_tail(&new->entries, &bk->entries);
 		bk->count++;
 		spin_unlock(&bk->lock);
@@ -177,6 +161,7 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 	struct kkv_ht_entry *entry;
 	struct kkv_ht_entry *new;
 	struct kkv_ht_entry *remove = NULL;
+	int isin = 0;
 
 	// check if already inited
 	spin_lock(&identifier->lock);
@@ -192,23 +177,39 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 		list_for_each_entry(entry, &bk->entries, entries) {
 			if (entry->kv_pair.key == key) {
 				remove = entry;
-				list_del(&remove->entries);
-				bk->count--;
 				break;
 			}
 		}
 
 		if (remove) {
-			spin_unlock(&bk->lock);
-			size = remove->kv_pair.size > size ? size : remove->kv_pair.size;
-			if (copy_to_user(val, remove->kv_pair.val, size) != 0) {
-				printk(KERN_ERR "copy_to_user() failed");
-				list_add_tail(&remove->entries, &bk->entries);
-				return -EFAULT;
+			if (remove->kv_pair.val) {
+				size = remove->kv_pair.size > size ? size : remove->kv_pair.size;
+				if (copy_to_user(val, remove->kv_pair.val, size) != 0) {
+					printk(KERN_ERR "copy_to_user() failed");
+					list_add_tail(&remove->entries, &bk->entries);
+					spin_unlock(&bk->lock);
+					return -EFAULT;
+				}
+				remove->q_count--;
+				if (!remove->q_count) {
+					list_del(&remove->entries);
+					bk->count--;
+					spin_unlock(&bk->lock);
+					kfree(remove->kv_pair.val);
+					kmem_cache_free(cache, remove);
+				} else {
+					spin_unlock(&bk->lock);
+					kfree(remove->kv_pair.val);
+					remove->kv_pair.val = NULL;
+				}
+				return 0;
+			} else {
+				if (!isin)
+					remove->q_count++;
+				spin_unlock(&bk->lock);
+				if (wait_event_interruptible(remove->q, remove->kv_pair.val) == -ERESTARTSYS)
+					return -EINTR;
 			}
-			kfree(remove->kv_pair.val);
-			kmem_cache_free(cache, remove);
-			return 0;
 		} else {
 			if (flags == KKV_NONBLOCK) {
 				spin_unlock(&bk->lock);
@@ -222,15 +223,17 @@ long kkv_get(uint32_t key, void *val, size_t size, int flags)
 				return -ENOMEM;
 			}
 			new->kv_pair.key = key;
-			new->kv_pair.size = size;
+			new->kv_pair.size = 0;
+			new->kv_pair.val = NULL;
 			INIT_LIST_HEAD(&new->entries);
 			init_waitqueue_head(&new->q);
-			new->q_count = 0;
+			new->q_count = 1;
 			list_add_tail(&new->entries, &bk->entries);
 			spin_unlock(&bk->lock);
-			if (wait_event_interruptible(new->q, new->q_count) == -ERESTARTSYS)
+			if (wait_event_interruptible(new->q, new->kv_pair.val) == -ERESTARTSYS)
 				return -EINTR;
 		}
+		isin = 1;
 	}
 	return -ENOENT;
 }
